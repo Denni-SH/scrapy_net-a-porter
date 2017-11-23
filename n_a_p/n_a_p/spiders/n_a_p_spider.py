@@ -1,49 +1,76 @@
 # -*- coding: utf-8 -*-
+
 import scrapy
 from n_a_p import items
+from datetime import datetime
+import json
 
 class NAPSpiderSpider(scrapy.Spider):
     name = 'n_a_p_spider'
-    # allowed_domains = ['nap_spider.com']
-    start_urls = ['https://www.net-a-porter.com/ua/en/d/Shop/Clothing/All?pn=1&npp=60&image_view=product&dScroll=0']
-    # search_url = 'https://www.net-a-porter.com/ua/en/d/Shop/Clothing/All?pn=1&npp=60&image_view=product&dScroll=0'
-    # def __init__(self, url=search_url):
-    # def start_requests(self):
-    #     yield scrapy.Request(url=self.search_url, callback=self.parse)
 
-    def parse(self, response):
-        search_url = response.xpath('//div[contains(@id,"sub-navigation")]')
-        categories = []
-        for category in search_url:
-            item = items.NAPItem()
-            item['cat_name'] = search_url.xpath('//li/a')
-            item['cat_link'] = search_url.xpath('')
-            yield item
+    def __init__(self, url = None, *args, **kwargs):
+        self.url = 'https://www.net-a-porter.com'
+        super(NAPSpiderSpider, self).__init__(*args, **kwargs)
 
-    def new_func(self, response):
-        site = self.start_urls[0]
-        # url = response.xpath('//h3[contains(@class,"r")]/a//text()').extract()
-        # site_product_id = response.xpath('//h3[contains(@class,"r")]/a//text()').extract()
-        # name = response.xpath('//h3[contains(@class,"r")]/a//text()').extract()
-        # description = response.xpath('//h3[contains(@class,"r")]/a//text()').extract()
-        brand = 'Porter'
-        # categories = response.xpath('//h3[contains(@class,"r")]/a//text()').extract()
-        # material = response.xpath('//h3[contains(@class,"r")]/a//text()').extract()
-        # made_in = response.xpath('//h3[contains(@class,"r")]/a//text()').extract()
-        # images = response.xpath('//h3[contains(@class,"r")]/a//text()').extract()
-        print(response)
-        # item = items.NAPItem()
-        # for i in info:
-        #     item['links'] = i
-        #     yield item
+    def start_requests(self):
+        yield scrapy.Request(url=self.url, callback=self.get_categories)
 
 
+    def get_categories(self, response):
+        '''main page parsing'''
+        categories = response.xpath('//ul[contains(@class,"sf-nav__bar")]/li[position()>2]/a')
+        for category in categories:
+            title = category.xpath('text()').extract_first().strip()
+            link = category.xpath('@href').extract_first()
+            yield scrapy.Request(url=self.url+link,
+                                 callback=self.get_subcategory,
+                                 meta={'category': title})
 
-    # def parse_items(self):
-    #     pass
-    #
-    # def parse_page(self):
-    #     pass
-    #
-    # def parse_details(self):
-    #     pass
+    def get_subcategory(self, response):
+        '''category pages parsing'''
+        category_urls = response.xpath('//div[contains(@id,"sub-navigation-contents")]/ul/li/a')
+        for category in category_urls:
+            title = category.xpath('span/text()').extract_first()
+            link = category.xpath('@href').extract_first()
+            yield scrapy.Request(url=self.url+link,
+                                 callback=self.get_products,
+                                 meta={'category': response.meta['category'], 'subcategory':title})
+    
+    def get_products(self, response):
+        '''subcategory pages parsing'''
+        products = response.xpath\
+            ('//ul[contains(@class,"products")]/li/div[contains(@class,"description")]/a/@href').extract()
+        for product_link in products:
+            print(product_link)
+            yield scrapy.Request(url=self.url+product_link,
+                                 callback=self.get_product_details,
+                                 meta={'categories': [response.meta['category'], response.meta['subcategory']]})
+
+    def get_product_details(self, response):
+        '''product pages parsing'''
+        product = items.ProductItem()
+        price = items.PriceItem()
+
+        product['site'] = self.url
+        product['url'] = response.url
+        product['site_product_id'] = \
+            response.xpath('//div[contains(@class, "top-product-code")]/div/span/text()').extract_first()
+        product['name'] = response.xpath('//h2[contains(@class, "product-name")]/text()').extract_first()
+        product['description'] = response.xpath(
+            '//widget-show-hide[contains(@id, "accordion-2")]/div[contains(@class, "show-hide-content")]/div/p/text()'
+            ).extract_first()
+        product['brand'] = response.xpath('//div[contains(@class, "container-title")]/h1/a/span/text()').extract_first()
+        product['categories'] = response.meta['categories']
+        product['material'] = \
+            response.xpath(
+                '//widget-show-hide[contains(@id, "accordion-2")]/div[contains(@class, "show-hide-content")]/div/ul[contains(@class, "font-list-copy")]/li/text()'
+            ).extract_first()
+        product['images'] = response.xpath('//ul[contains(@class, "thumbnails no-carousel") or contains(@class, "swiper-wrapper") or contains(@class, "thumbnails")]/li/img/@src').extract()
+        yield product
+
+        price['site_product_id'] = product['site_product_id']
+        price['currency'] = 'GBP'
+        price['date'] = datetime.now()
+        yield price
+        # price['price'] = response.xpath('//div[contains(@class, "container-title")]/nap-price/span[contains()@class, "full-price"]/text()').extract_first()
+        # jsonresponse = response.json()
